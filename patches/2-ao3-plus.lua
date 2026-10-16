@@ -653,7 +653,7 @@ local function badge_widget(book, width, height, ctx, filepath)
                 grid,
             },
         }
-        return TopContainer:new{
+        local inset_widget = TopContainer:new{
             dimen = Geom:new{ w = width, h = height },
             LeftContainer:new{
                 dimen = Geom:new{
@@ -663,11 +663,19 @@ local function badge_widget(book, width, height, ctx, filepath)
                 padded_grid,
             },
         }
+        -- Flags this as badge iconography rather than cover artwork, so
+        -- Bookshelf's opening-book squeeze/flex (which distorts whatever is
+        -- in the cover slot) can be skipped for it -- see
+        -- install_open_effect_guard.
+        inset_widget.ao3_plus_placeholder = true
+        return inset_widget
     end
-    return CenterContainer:new{
+    local centered_widget = CenterContainer:new{
         dimen = Geom:new{ w = width, h = height },
         grid,
     }
+    centered_widget.ao3_plus_placeholder = true
+    return centered_widget
 end
 
 local userpatch = require("userpatch")
@@ -859,7 +867,47 @@ local function install_panel_tap()
     end
 end
 
+-- Grid, shelf and list covers record the tapped SpineWidget in the shared
+-- SpineWidget.last_tapped rendezvous (several call sites across Bookshelf),
+-- then _paintOpeningEffect squeezes or squashes whatever is in that widget's
+-- _cover_card as if it were cover artwork. Our badge grid is not artwork --
+-- flexing it looked like the grid breaking apart toward the left edge (the
+-- list view's squashCoverOpen effect). Consume the rendezvous before
+-- Bookshelf's method reads it whenever the tapped cover is one of ours, so
+-- the book still opens normally but with no distortion.
+local function install_open_effect_guard()
+    local BookshelfWidget = package.loaded["lib/bookshelf_widget"]
+    if not BookshelfWidget then
+        local ok, module = pcall(require, "lib/bookshelf_widget")
+        BookshelfWidget = ok and module or nil
+    end
+    if type(BookshelfWidget) ~= "table"
+            or type(BookshelfWidget._paintOpeningEffect) ~= "function"
+            or BookshelfWidget.ao3_open_effect_patched then
+        return
+    end
+    BookshelfWidget.ao3_open_effect_patched = true
+    local original = BookshelfWidget._paintOpeningEffect
+    function BookshelfWidget:_paintOpeningEffect(fp)
+        local ok, err = pcall(function()
+            local SpineWidget = package.loaded["lib/bookshelf_spine_widget"]
+            local spine = SpineWidget and SpineWidget.last_tapped
+            local card = spine and spine._cover_card
+            local content = card and card[1]
+            if content and (content.ao3_plus_placeholder
+                    or getmetatable(content) == PanelBadges) then
+                SpineWidget.last_tapped = nil
+            end
+        end)
+        if not ok then
+            logger.warn("[ao3 plus] opening-effect guard failed:", err)
+        end
+        return original(self, fp)
+    end
+end
+
 local function patch_bookshelf(Bookshelf)
+    install_open_effect_guard()
     install_panel_tap()
     if type(Bookshelf.registerPlaceholder) == "function" then
         local ok, err = Bookshelf:registerPlaceholder(
