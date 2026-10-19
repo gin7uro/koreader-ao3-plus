@@ -157,10 +157,6 @@ local function metadata_tags_for_book(book)
     return collect_tags(book)
 end
 
-local function fandom_for_book(book)
-    return (fandom_from_tags(metadata_tags_for_book(book)))
-end
-
 local function is_archive_warning(value)
     return value and (value:find("archive warnings", 1, true)
         or value == "graphic depictions of violence"
@@ -352,7 +348,59 @@ local function empty_metadata()
         status = "none",
         chapters = nil,
         wordcount = nil,
+        -- false marks "scanned, none found" so older cache entries without
+        -- this field can be told apart and rescanned once.
+        fandoms = false,
     }
+end
+
+local HTML_ENTITIES = {
+    amp = "&", lt = "<", gt = ">", quot = '"', apos = "'", nbsp = " ",
+}
+
+local function utf8_char(code)
+    if code < 0x80 then return string.char(code) end
+    if code < 0x800 then
+        return string.char(0xC0 + math.floor(code / 0x40),
+            0x80 + code % 0x40)
+    end
+    if code < 0x10000 then
+        return string.char(0xE0 + math.floor(code / 0x1000),
+            0x80 + math.floor(code / 0x40) % 0x40, 0x80 + code % 0x40)
+    end
+    if code < 0x110000 then
+        return string.char(0xF0 + math.floor(code / 0x40000),
+            0x80 + math.floor(code / 0x1000) % 0x40,
+            0x80 + math.floor(code / 0x40) % 0x40, 0x80 + code % 0x40)
+    end
+end
+
+local function html_text(value)
+    value = value:gsub("<[^>]*>", "")
+    value = value:gsub("&(#?x?)(%w+);", function(prefix, name)
+        if prefix == "" then return HTML_ENTITIES[name] end
+        local code = tonumber(name, prefix == "#x" and 16 or 10)
+        return code and utf8_char(code)
+    end)
+    return value:gsub("%s+", " "):match("^%s*(.-)%s*$")
+end
+
+-- Ao3's preface lists fandoms as linked tags inside
+-- <dt>Fandom:</dt><dd>...</dd> ("Fandoms:" when there are several).
+local function fandom_from_page(page)
+    local block = page:match(
+        "<dt[^>]*>%s*Fandoms?:%s*</dt>%s*<dd[^>]*>(.-)</dd>")
+    if not block then return nil end
+    local names = {}
+    for raw in block:gmatch("<a[^>]*>(.-)</a>") do
+        local name = html_text(raw)
+        if name ~= "" then names[#names + 1] = name end
+    end
+    if #names == 0 then
+        local text = html_text(block)
+        return text ~= "" and { text } or nil
+    end
+    return names
 end
 
 local function scan_epub_metadata(filepath)
@@ -390,7 +438,11 @@ local function scan_epub_metadata(filepath)
                 if words then
                     metadata.wordcount = words
                 end
-                if metadata.chapters and metadata.wordcount then
+                if not metadata.fandoms then
+                    metadata.fandoms = fandom_from_page(page) or false
+                end
+                if metadata.chapters and metadata.wordcount
+                        and metadata.fandoms then
                     break
                 end
             end
@@ -450,9 +502,22 @@ local function metadata_from_file(filepath)
     end
     local store = get_metadata_store()
     local cached = store and store:readSetting(filepath)
-    if type(cached) == "table" then return cached end
+    if type(cached) == "table" and cached.fandoms ~= nil then return cached end
 
     return scan_and_cache_metadata(filepath)
+end
+
+-- Prefers the fandoms printed on the work's opening page; the subject-tag
+-- guess is only a fallback for non-EPUB files or pages without one.
+-- `first_only` returns just the first fandom of a crossover.
+local function fandom_for_book(book, tags, filepath, first_only)
+    local metadata = metadata_from_file(filepath
+        or (type(book) == "table" and book.filepath))
+    local fandoms = metadata and metadata.fandoms
+    if type(fandoms) == "table" and fandoms[1] then
+        return first_only and fandoms[1] or table.concat(fandoms, ", ")
+    end
+    return (fandom_from_tags(tags or metadata_tags_for_book(book)))
 end
 
 local function icons_for(book, filepath)
@@ -940,7 +1005,13 @@ local function patch_bookshelf(Bookshelf)
                 end,
             },
             ao3_fandom = {
-                description = "Ao3 fandom",
+                description = "Ao3 fandom (first only)",
+                expand = function(book)
+                    return fandom_for_book(book, nil, nil, true) or ""
+                end,
+            },
+            ao3_multifandom = {
+                description = "Ao3 multifandom (all)",
                 expand = function(book)
                     return fandom_for_book(book) or ""
                 end,
@@ -1234,7 +1305,7 @@ local function patch_coverbrowser(plugin)
             local content_height = self.height
                 - (self.underline_h or 0) - ROW_BOTTOM_PADDING
             local tag_list = collect_tags(book)
-            local fandom = fandom_from_tags(tag_list)
+            local fandom = fandom_for_book(book, tag_list, self.filepath)
             if display_enabled("fandom") and fandom then
                 local fandom_widget = TextBoxWidget:new{
                     text = fandom,

@@ -100,10 +100,11 @@ picker:
 |---|---|
 | `%ao3_words` | Word count |
 | `%ao3_chapters` | Chapter count, such as `12/24` or `12/?` |
-| `%ao3_fandom` | Fandom |
+| `%ao3_fandom` | First fandom only, useful for crossovers with many fandoms |
+| `%ao3_multifandom` | All fandoms, separated by commas |
 
 <p align="center">
-  <a href="docs/images/bookshelf-token-picker.png"><img src="docs/images/bookshelf-token-picker.png" alt="Bookshelf token picker with the Ao3 chapter count, fandom and word count tokens" width="480"></a>
+  <a href="docs/images/bookshelf-token-picker.png"><img src="docs/images/bookshelf-token-picker.png" alt="Bookshelf token picker with the Ao3 chapter count, fandom, multifandom and word count tokens" width="480"></a>
 </p>
 
 Examples:
@@ -112,6 +113,7 @@ Examples:
 [if:ao3_words]Words: %ao3_words[/if]
 [if:ao3_chapters]Chapters: %ao3_chapters[/if]
 %ao3_fandom
+%ao3_multifandom
 ```
 
 ## Settings for Koreader list
@@ -139,13 +141,13 @@ The default maximum is **15 tags**.
 
 Ao3 Plus reads information directly from your EPUBs. It checks up to the
 first four HTML pages inside each EPUB for the Ao3 work information, including
-the word count, chapter count and completion status.
+the fandom, word count, chapter count and completion status.
 
 The scanner does not change your EPUBs and does not send anything online. It
 saves the results in small cache files inside KOReader's `settings` folder:
 
 - `bookshelf_ao3_status_v2.lua` stores completion status
-- `ao3_plus_metadata_v1.lua` stores word and chapter counts
+- `ao3_plus_metadata_v1.lua` stores fandoms and word and chapter counts
 
 This means Ao3 Plus does not need to reopen the same EPUB every time the list
 is displayed.
