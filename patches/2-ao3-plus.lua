@@ -351,6 +351,14 @@ local function empty_metadata()
         -- false marks "scanned, none found" so older cache entries without
         -- this field can be told apart and rescanned once.
         fandoms = false,
+        rating = false,
+        warnings = false,
+        categories = false,
+        pairings = false,
+        tags = false,
+        published = false,
+        completed = false,
+        updated = false,
     }
 end
 
@@ -385,11 +393,12 @@ local function html_text(value)
     return value:gsub("%s+", " "):match("^%s*(.-)%s*$")
 end
 
--- Ao3's preface lists fandoms as linked tags inside
--- <dt>Fandom:</dt><dd>...</dd> ("Fandoms:" when there are several).
-local function fandom_from_page(page)
+-- Ao3's preface lists work tags as linked entries inside
+-- <dt>Label:</dt><dd>...</dd> pairs; labels pluralise when a work has
+-- several values ("Fandom:"/"Fandoms:").
+local function tag_list_from_page(page, label_pattern)
     local block = page:match(
-        "<dt[^>]*>%s*Fandoms?:%s*</dt>%s*<dd[^>]*>(.-)</dd>")
+        "<dt[^>]*>%s*" .. label_pattern .. ":%s*</dt>%s*<dd[^>]*>(.-)</dd>")
     if not block then return nil end
     local names = {}
     for raw in block:gmatch("<a[^>]*>(.-)</a>") do
@@ -438,11 +447,46 @@ local function scan_epub_metadata(filepath)
                 if words then
                     metadata.wordcount = words
                 end
-                if not metadata.fandoms then
-                    metadata.fandoms = fandom_from_page(page) or false
+                if not metadata.published then
+                    metadata.published =
+                        page:match("Published:%s*([%d%-]+)") or false
                 end
+                if not metadata.completed then
+                    metadata.completed =
+                        page:match("Completed:%s*([%d%-]+)") or false
+                end
+                if not metadata.updated then
+                    metadata.updated =
+                        page:match("Updated:%s*([%d%-]+)") or false
+                end
+                if not metadata.fandoms then
+                    metadata.fandoms =
+                        tag_list_from_page(page, "Fandoms?") or false
+                end
+                if not metadata.rating then
+                    local rating = tag_list_from_page(page, "Rating")
+                    metadata.rating = rating and rating[1] or false
+                end
+                if not metadata.warnings then
+                    metadata.warnings =
+                        tag_list_from_page(page, "Archive Warnings?") or false
+                end
+                if not metadata.categories then
+                    metadata.categories =
+                        tag_list_from_page(page, "Categor[yi]e?s?") or false
+                end
+                if not metadata.pairings then
+                    metadata.pairings =
+                        tag_list_from_page(page, "Relationships?") or false
+                end
+                if not metadata.tags then
+                    metadata.tags =
+                        tag_list_from_page(page, "Additional Tags") or false
+                end
+                -- The rating check stands in for the whole preface page: the
+                -- other <dt> fields were parsed from the same page above.
                 if metadata.chapters and metadata.wordcount
-                        and metadata.fandoms then
+                        and metadata.fandoms and metadata.rating then
                     break
                 end
             end
@@ -502,7 +546,11 @@ local function metadata_from_file(filepath)
     end
     local store = get_metadata_store()
     local cached = store and store:readSetting(filepath)
-    if type(cached) == "table" and cached.fandoms ~= nil then return cached end
+    if type(cached) == "table" and cached.fandoms ~= nil
+            and cached.pairings ~= nil and cached.tags ~= nil
+            and cached.updated ~= nil and cached.completed ~= nil then
+        return cached
+    end
 
     return scan_and_cache_metadata(filepath)
 end
@@ -520,6 +568,80 @@ local function fandom_for_book(book, tags, filepath, first_only)
     return (fandom_from_tags(tags or metadata_tags_for_book(book)))
 end
 
+-- Returns the work's "Additional Tags" as scanned from its opening page, or
+-- nil if none were found. Unlike genre-derived tags this list never needs
+-- filtering: Ao3's preface already separates rating, category, warning,
+-- fandom and relationship tags into their own fields.
+local function scanned_tags_for_book(book, filepath)
+    local fp = filepath or (type(book) == "table" and book.filepath)
+    local metadata = metadata_from_file(fp)
+    local tags = metadata and metadata.tags
+    return type(tags) == "table" and tags or nil
+end
+
+-- The reader's own review, read the same way Bookshelf's own book status
+-- editor stores it: `summary.note` in the sidecar, independent of Ao3
+-- metadata, so this works for any book.
+local function personal_review(filepath)
+    if type(filepath) ~= "string" or not DocSettings:hasSidecarFile(filepath) then
+        return nil
+    end
+    local ok, settings = pcall(DocSettings.open, DocSettings, filepath)
+    if not ok or not settings then return nil end
+    local summary = settings:readSetting("summary")
+    local note = summary and summary.note
+    return (type(note) == "string" and note:match("%S")) and note or nil
+end
+
+-- In the preface's Archive Warning block, any value other than the opt-out
+-- entries is one of Ao3's severe archive warnings.
+local function warning_badge_from_list(warnings)
+    local severe, choose_not_to, none, external
+    for _, raw in ipairs(warnings) do
+        local value = normalize(raw)
+        if value == "no archive warnings apply" then
+            none = true
+        elseif value == "creator chose not to use archive warnings"
+                or value == "choose not to use archive warnings" then
+            choose_not_to = true
+        elseif value == "external work" then
+            external = true
+        elseif value and value ~= "" then
+            severe = true
+        end
+    end
+    if severe then return "warning-yes" end
+    if choose_not_to then return "warning-choosenotto" end
+    if none then return "warning-no" end
+    if external then return "warning-external-work" end
+end
+
+-- Badge fallback for EPUBs whose Ao3 subject metadata is missing, for
+-- example after conversion tools rewrote the OPF: read the same badges from
+-- the scanned work preface instead.
+local function badges_from_scan(found, book, filepath)
+    if found.rating and found.category and found.warning then return end
+    local fp = filepath or (type(book) == "table" and book.filepath)
+    if type(fp) ~= "string" or not fp:lower():match("%.epub$") then return end
+    local metadata = metadata_from_file(fp)
+    if type(metadata) ~= "table" then return end
+    if not found.rating and type(metadata.rating) == "string" then
+        found.rating = RATING[normalize(metadata.rating)]
+    end
+    if not found.category and type(metadata.categories) == "table" then
+        for _, value in ipairs(metadata.categories) do
+            local badge = CATEGORY[normalize(value)]
+            if badge then
+                found.category = badge
+                break
+            end
+        end
+    end
+    if not found.warning and type(metadata.warnings) == "table" then
+        found.warning = warning_badge_from_list(metadata.warnings)
+    end
+end
+
 local function icons_for(book, filepath)
     local found = {}
     local chapter_completion = completion_from_chapter_text(
@@ -529,6 +651,7 @@ local function icons_for(book, filepath)
         found.complete = chapter_completion
             or completion_from_status_text(book)
             or completion_from_file(book, filepath)
+        badges_from_scan(found, book, filepath)
         return found
     end
 
@@ -586,6 +709,7 @@ local function icons_for(book, filepath)
     elseif warning_external then
         found.warning = "warning-external-work"
     end
+    badges_from_scan(found, book, filepath)
     return found
 end
 
@@ -779,6 +903,10 @@ end
 
 local function display_enabled(name)
     return G_reader_settings:readSetting("ao3_plus_hide_" .. name) ~= true
+end
+
+local function tag_source_is_scanned()
+    return G_reader_settings:readSetting("ao3_plus_tag_source") == "scanned"
 end
 
 local function max_displayed_tags()
@@ -1014,6 +1142,56 @@ local function patch_bookshelf(Bookshelf)
                 description = "Ao3 multifandom (all)",
                 expand = function(book)
                     return fandom_for_book(book) or ""
+                end,
+            },
+            ao3_pairing = {
+                description = "Ao3 pairing (first relationship)",
+                expand = function(book)
+                    local metadata = metadata_from_file(
+                        type(book) == "table" and book.filepath)
+                    local pairings = metadata and metadata.pairings
+                    return type(pairings) == "table" and pairings[1] or ""
+                end,
+            },
+            ao3_updated = {
+                description = "Ao3 last updated date",
+                expand = function(book)
+                    local metadata = metadata_from_file(
+                        type(book) == "table" and book.filepath)
+                    if not metadata then return "" end
+                    local date = metadata.completed or metadata.updated
+                        or metadata.published
+                    return type(date) == "string" and date or ""
+                end,
+            },
+            ao3_tags = {
+                description = "Ao3 additional tags (scanned), optional "
+                    .. "replacement for Bookshelf's built-in %genres",
+                expand = function(book)
+                    local tags = scanned_tags_for_book(book, nil)
+                    return tags and table.concat(tags, ", ") or ""
+                end,
+            },
+            ao3_review = {
+                description = "Your own review, first line only; not "
+                    .. "Ao3-specific, works for any book",
+                expand = function(book)
+                    local note = personal_review(
+                        type(book) == "table" and book.filepath)
+                    if not note then return "" end
+                    local first_line = note:match("^[^\r\n]*")
+                    return first_line and first_line:match("^%s*(.-)%s*$")
+                        or ""
+                end,
+            },
+            ao3_review_full = {
+                description = "Your own review, in full with line breaks "
+                    .. "collapsed to spaces; not Ao3-specific",
+                expand = function(book)
+                    local note = personal_review(
+                        type(book) == "table" and book.filepath)
+                    if not note then return "" end
+                    return note:gsub("%s+", " "):match("^%s*(.-)%s*$")
                 end,
             },
         })
@@ -1306,9 +1484,23 @@ local function patch_coverbrowser(plugin)
                 - (self.underline_h or 0) - ROW_BOTTOM_PADDING
             local tag_list = collect_tags(book)
             local fandom = fandom_for_book(book, tag_list, self.filepath)
-            if display_enabled("fandom") and fandom then
-                local fandom_widget = TextBoxWidget:new{
-                    text = fandom,
+            -- Fandom and pairing share one line style and stack directly
+            -- under the title; the updated/published date moved to the
+            -- stats line instead, next to the word and chapter counts.
+            local fandom_line_index
+            local function insert_fandom_style_line(text)
+                if type(text) ~= "string" or text == "" then return end
+                if not fandom_line_index then
+                    fandom_line_index = 2
+                    for index = 1, #captured.group do
+                        if captured.group[index] == captured.title then
+                            fandom_line_index = index + 1
+                            break
+                        end
+                    end
+                end
+                local widget = TextBoxWidget:new{
+                    text = text,
                     face = configured_face("fandom", captured.face, -2),
                     width = math.max(MIN_TEXT_WIDTH,
                         captured.width - LIST_TEXT_MARGIN),
@@ -1318,17 +1510,22 @@ local function patch_coverbrowser(plugin)
                     alignment = "left",
                     fgcolor = captured.fgcolor,
                 }
-                local insert_index = 2
-                for index = 1, #captured.group do
-                    if captured.group[index] == captured.title then
-                        insert_index = index + 1
-                        break
-                    end
-                end
-                table.insert(captured.group, insert_index, fandom_widget)
+                table.insert(captured.group, fandom_line_index, widget)
+                fandom_line_index = fandom_line_index + 1
             end
-            if display_enabled("tags") and #tag_list > 0 then
-                local regular_tags = filtered_tags(tag_list)
+            if display_enabled("fandom") and fandom then
+                insert_fandom_style_line(fandom)
+            end
+            if display_enabled("pairing") then
+                local metadata = metadata_from_file(self.filepath)
+                local pairings = metadata and metadata.pairings
+                insert_fandom_style_line(
+                    type(pairings) == "table" and pairings[1])
+            end
+            local regular_tags = tag_source_is_scanned()
+                and scanned_tags_for_book(book, self.filepath)
+            regular_tags = regular_tags or filtered_tags(tag_list)
+            if display_enabled("tags") then
                 if #regular_tags > 0 then
                     local remaining = content_height - used_height()
                     local gap = Screen:scaleBySize(6)
@@ -1373,16 +1570,36 @@ local function patch_coverbrowser(plugin)
             local stats_widget
             local stats_height
             local stats_gap = Screen:scaleBySize(6)
-            local file_metadata = display_enabled("metadata")
+            local file_metadata = (display_enabled("metadata")
+                    or display_enabled("updated"))
                 and metadata_from_file(self.filepath)
             local stats = {}
             if file_metadata then
-                if type(file_metadata.wordcount) == "string" then
-                    stats[#stats + 1] = "Words: " .. file_metadata.wordcount
+                if display_enabled("metadata") then
+                    if type(file_metadata.wordcount) == "string" then
+                        stats[#stats + 1] =
+                            "Words: " .. file_metadata.wordcount
+                    end
+                    if type(file_metadata.chapters) == "string" then
+                        stats[#stats + 1] = "Chapters: "
+                            .. file_metadata.chapters
+                    end
                 end
-                if type(file_metadata.chapters) == "string" then
-                    stats[#stats + 1] = "Chapters: "
-                        .. file_metadata.chapters
+                if display_enabled("updated") then
+                    -- Ao3 only writes one of these: Completed for finished
+                    -- multi-chapter works, Updated for works still in
+                    -- progress, and neither for one-shots, which only ever
+                    -- have Published.
+                    if type(file_metadata.completed) == "string" then
+                        stats[#stats + 1] =
+                            "Completed: " .. file_metadata.completed
+                    elseif type(file_metadata.updated) == "string" then
+                        stats[#stats + 1] =
+                            "Last updated: " .. file_metadata.updated
+                    elseif type(file_metadata.published) == "string" then
+                        stats[#stats + 1] =
+                            "Published: " .. file_metadata.published
+                    end
                 end
             end
             if #stats > 0 then
@@ -1713,6 +1930,8 @@ local function patch_coverbrowser(plugin)
                                 display_toggle(_("Show title"), "title"),
                                 display_toggle(_("Show author"), "author"),
                                 display_toggle(_("Show fandom"), "fandom"),
+                                display_toggle(_("Show pairing"), "pairing"),
+                                display_toggle(_("Show updated date"), "updated"),
                                 display_toggle(_("Show tags"), "tags"),
                                 display_toggle(_("Show description"), "description"),
                                 display_toggle(_("Show fic data"), "metadata"),
@@ -1734,6 +1953,25 @@ local function patch_coverbrowser(plugin)
                             text = _("Tags"),
                             sub_item_table = {
                                 tag_count_menu(),
+                                {
+                                    text = _(
+                                        "Use scanned Additional Tags instead of genres"),
+                                    checked_func = tag_source_is_scanned,
+                                    keep_menu_open = true,
+                                    callback = function()
+                                        G_reader_settings:saveSetting(
+                                            "ao3_plus_tag_source",
+                                            tag_source_is_scanned()
+                                                and nil or "scanned")
+                                        refresh_file_list()
+                                    end,
+                                    help_text = _(
+                                        "Reads the Additional Tags Ao3 lists on"
+                                        .. " the work's opening page instead of"
+                                        .. " genre metadata. Off by default;"
+                                        .. " falls back to genres when a work"
+                                        .. " has none."),
+                                },
                             },
                         },
                         {

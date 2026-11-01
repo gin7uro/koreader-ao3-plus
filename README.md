@@ -30,7 +30,8 @@ Books that already have covers are left alone.
 ## What it adds
 
 - Rating, pairing/category, warnings and completion badges
-- Fandom and tags
+- Fandom, pairing and last updated date
+- Tags
 - Description
 - Word count and chapter count
 - Reading progress
@@ -102,6 +103,11 @@ picker:
 | `%ao3_chapters` | Chapter count, such as `12/24` or `12/?` |
 | `%ao3_fandom` | First fandom only, useful for crossovers with many fandoms |
 | `%ao3_multifandom` | All fandoms, separated by commas |
+| `%ao3_pairing` | First relationship listed on the work |
+| `%ao3_tags` | Scanned Additional Tags, comma-separated; independent of the detailed-list tag source setting |
+| `%ao3_updated` | Last updated date (`YYYY-MM-DD`); falls back to the published date for works never updated, useful for seeing how old a fic is |
+| `%ao3_review` | Your own review, first line only; not Ao3-specific, works for any book |
+| `%ao3_review_full` | Your own review, in full with line breaks collapsed to spaces; not Ao3-specific |
 
 <p align="center">
   <a href="docs/images/bookshelf-token-picker.png"><img src="docs/images/bookshelf-token-picker.png" alt="Bookshelf token picker with the Ao3 chapter count, fandom, multifandom and word count tokens" width="480"></a>
@@ -114,6 +120,10 @@ Examples:
 [if:ao3_chapters]Chapters: %ao3_chapters[/if]
 %ao3_fandom
 %ao3_multifandom
+%ao3_pairing
+%ao3_tags
+%ao3_updated
+[if:ao3_review]Review: %ao3_review[/if]
 ```
 
 ## Settings for Koreader list
@@ -128,26 +138,45 @@ Open:
 
 Settings are grouped into:
 
-- **Show and hide**: toggle the title, author, fandom, tags, description,
-  word and chapter counts, and reading progress
+- **Show and hide**: toggle the title, author, fandom, pairing, updated
+  date, tags, description, word and chapter counts, and reading progress
 - **Font settings**: choose the font and size for each text section
-- **Tags**: choose how many tags are displayed
+- **Tags**: choose how many tags are displayed, and optionally switch the
+  detailed-list tags line to scanned Additional Tags
 - **Refresh list**: to see changes
 - and **Clean Ao3 Plus cache**: manually prune cache
 
 The default maximum is **15 tags**.
 
+The detailed list normally builds its tags line from genre metadata, with
+rating, category, warning and fandom values filtered out. Turning on
+**Use scanned Additional Tags instead of genres** replaces that line with the
+work's "Additional Tags" field read from its opening page instead — nothing
+to filter out, since Ao3 already keeps those tags separate from rating,
+category, warning, fandom and relationships. This is off by default; if a
+work has no Additional Tags, the line falls back to genre-derived tags.
+Bookshelf's `%ao3_tags` token always returns the scanned tags regardless of
+this setting, so you can use it as an alternative to genre-based tags in your
+own templates.
+
 ### Scanner and cache
 
 Ao3 Plus reads information directly from your EPUBs. It checks up to the
 first four HTML pages inside each EPUB for the Ao3 work information, including
-the fandom, word count, chapter count and completion status.
+the fandom, rating, warnings, category, relationships, additional tags,
+published and updated dates, word count, chapter count and completion status.
+
+If a file lost its Ao3 subject metadata, for example because a conversion
+tool rewrote it, the badges fall back to the same information read from the
+work's first pages, so badges still appear as long as the Ao3 preface page is
+present.
 
 The scanner does not change your EPUBs and does not send anything online. It
 saves the results in small cache files inside KOReader's `settings` folder:
 
 - `bookshelf_ao3_status_v2.lua` stores completion status
-- `ao3_plus_metadata_v1.lua` stores fandoms and word and chapter counts
+- `ao3_plus_metadata_v1.lua` stores fandoms, relationships, additional tags,
+  badge details, published/updated dates and word and chapter counts
 
 This means Ao3 Plus does not need to reopen the same EPUB every time the list
 is displayed.
