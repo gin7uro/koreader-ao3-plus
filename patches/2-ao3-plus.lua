@@ -593,6 +593,26 @@ local function personal_review(filepath)
     return (type(note) == "string" and note:match("%S")) and note or nil
 end
 
+-- Bookshelf wraps a list line into any spare row height, so a long
+-- %ao3_review bought itself a second rendered line instead of truncating.
+-- Capping the token keeps it to roughly one line; the cut lands on a word
+-- boundary and the walk is UTF-8 aware so an ellipsis never splits a
+-- character.
+local REVIEW_MAX_CHARS = 60
+local function shorten_review(line)
+    local chars, count = {}, 0
+    for ch in line:gmatch("[\1-\127\194-\244][\128-\191]*") do
+        count = count + 1
+        if count > REVIEW_MAX_CHARS then
+            local head = table.concat(chars)
+            head = head:match("^(.-)%s+%S*$") or head
+            return head .. "…"
+        end
+        chars[count] = ch
+    end
+    return line
+end
+
 -- In the preface's Archive Warning block, any value other than the opt-out
 -- entries is one of Ao3's severe archive warnings.
 local function warning_badge_from_list(warnings)
@@ -1173,15 +1193,17 @@ local function patch_bookshelf(Bookshelf)
                 end,
             },
             ao3_review = {
-                description = "Your own review, first line only; not "
-                    .. "Ao3-specific, works for any book",
+                description = "Your own review snippet, first line only "
+                    .. "and shortened to one list line with an ellipsis; "
+                    .. "not Ao3-specific, works for any book",
                 expand = function(book)
                     local note = personal_review(
                         type(book) == "table" and book.filepath)
                     if not note then return "" end
                     local first_line = note:match("^[^\r\n]*")
-                    return first_line and first_line:match("^%s*(.-)%s*$")
-                        or ""
+                    first_line = first_line
+                        and first_line:match("^%s*(.-)%s*$") or ""
+                    return shorten_review(first_line)
                 end,
             },
             ao3_review_full = {

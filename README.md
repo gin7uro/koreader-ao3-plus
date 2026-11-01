@@ -106,7 +106,7 @@ picker:
 | `%ao3_pairing` | First relationship listed on the work |
 | `%ao3_tags` | Scanned Additional Tags, comma-separated; independent of the detailed-list tag source setting |
 | `%ao3_updated` | Last updated date (`YYYY-MM-DD`); falls back to the published date for works never updated, useful for seeing how old a fic is |
-| `%ao3_review` | Your own review, first line only; not Ao3-specific, works for any book |
+| `%ao3_review` | Your own review snippet, first line only and shortened with an ellipsis if it would spill onto a second list line; not Ao3-specific, works for any book |
 | `%ao3_review_full` | Your own review, in full with line breaks collapsed to spaces; not Ao3-specific |
 
 <p align="center">
