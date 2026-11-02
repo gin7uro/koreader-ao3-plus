@@ -123,8 +123,11 @@ Examples:
 %ao3_pairing
 %ao3_tags
 %ao3_updated
-[if:ao3_review]Review: %ao3_review[/if]
+[if:ao3_review]Review: "%ao3_review"[/if]
 ```
+
+Example for review snippet:
+<img width="1250" height="162" alt="review snippet" src="https://github.com/user-attachments/assets/6231ceee-9b25-41d0-96cc-e610e6e7c3fc" />
 
 ## Settings for Koreader list
 
