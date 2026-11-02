@@ -227,3 +227,7 @@ The source repository is licensed under GPL-2.0-or-later.
 ## Credits
 
 Huge thank you to [@AndyHazz](https://github.com/AndyHazz) over at [bookshelf.koplugin](https://github.com/AndyHazz/bookshelf.koplugin) for providing me with a hook so I can make this one! For more technical commentary please refer to the patch itself.
+
+## Feedback and Issues
+
+Please feel free to open a ticket in <a href="https://github.com/gin7uro/koreader-ao3-plus/issues">Issues</a> if you want to request new features or report a bug. Thank you!
